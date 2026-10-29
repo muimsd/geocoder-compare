@@ -1,5 +1,6 @@
 // Same-origin relay for geocoding providers that block browser (CORS) requests.
-// Only forwards GET requests to an allow-list of provider hosts; nothing is logged or stored.
+// Only forwards GET requests from this site's own pages to an allow-list of provider hosts;
+// nothing is logged or stored.
 const ALLOWED_HOSTS = new Set([
   'api.radar.io',
   'api.geocode.earth',
@@ -18,21 +19,26 @@ const ALLOWED_HOSTS = new Set([
   'api.maptiler.com',
 ]);
 
-const CORS = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, OPTIONS',
-  'Access-Control-Allow-Headers': 'Authorization, Content-Type',
-};
-
 const json = (status, body) =>
-  new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json', ...CORS } });
+  new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
 
-export async function onRequestOptions() {
-  return new Response(null, { status: 204, headers: CORS });
+// Accept only requests made by pages on this same origin, so other sites can't use the relay.
+// (Non-browser clients can forge these headers; this stops cross-site browser abuse, not determined scripts.)
+function isSameOrigin(request, selfOrigin) {
+  if (request.headers.get('Sec-Fetch-Site') === 'same-origin') return true;
+  const ref = request.headers.get('Referer') || request.headers.get('Origin');
+  try {
+    return !!ref && new URL(ref).origin === selfOrigin;
+  } catch {
+    return false;
+  }
 }
 
 export async function onRequestGet({ request }) {
-  const target = new URL(request.url).searchParams.get('url');
+  const self = new URL(request.url);
+  if (!isSameOrigin(request, self.origin)) return json(403, { error: 'The proxy only serves requests from this site.' });
+
+  const target = self.searchParams.get('url');
   if (!target) return json(400, { error: 'Missing ?url=' });
 
   let url;
@@ -62,7 +68,6 @@ export async function onRequestGet({ request }) {
       headers: {
         'Content-Type': upstream.headers.get('Content-Type') || 'application/json',
         'Cache-Control': 'no-store',
-        ...CORS,
       },
     });
   } catch (e) {
