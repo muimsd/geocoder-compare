@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Geocoder Compare</title>
+  <meta name="description" content="Compare Radar, Pelias, OpenStreetMap Nominatim, Google Maps and Mapbox geocoding side by side on a Leaflet map. Bring your own API keys, run benchmarks, export a report.">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+  <link rel="stylesheet" href="styles.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='%232a78d6' d='M12 2a7 7 0 0 0-7 7c0 5.25 7 13 7 13s7-7.75 7-13a7 7 0 0 0-7-7Zm0 9.5A2.5 2.5 0 1 1 12 6.5a2.5 2.5 0 0 1 0 5Z'/></svg>">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M12 2a7 7 0 0 0-7 7c0 5.25 7 13 7 13s7-7.75 7-13a7 7 0 0 0-7-7Zm0 9.5A2.5 2.5 0 1 1 12 6.5a2.5 2.5 0 0 1 0 5Z"/></svg>
+    <span>Geocoder Compare</span>
+  </div>
+  <nav class="tabs" role="tablist">
+    <button role="tab" data-tab="search" aria-selected="true">Search</button>
+    <button role="tab" data-tab="batch" aria-selected="false">Benchmark</button>
+    <button role="tab" data-tab="report" aria-selected="false">Report</button>
+    <button role="tab" data-tab="about" aria-selected="false">Providers</button>
+  </nav>
+  <button id="keysBtn" class="ghost small" title="Show/hide API keys &amp; options">⚙ Keys</button>
+  <button id="themeBtn" class="ghost icon" title="Toggle theme" aria-label="Toggle theme">◐</button>
+</header>
+
+<div class="layout">
+  <!-- ============ SIDEBAR: keys + options ============ -->
+  <aside class="sidebar" id="sidebar">
+    <section class="panel">
+      <div class="panel-head">
+        <h2>API keys</h2>
+        <button class="ghost small" id="toggleSidebar" aria-label="Collapse settings">Hide</button>
+      </div>
+      <p class="hint">Keys stay in your browser and are sent only to each provider (or the optional same-origin proxy). Nothing is logged.</p>
+      <div id="providerKeys"></div>
+      <label class="check"><input type="checkbox" id="rememberKeys"> Remember keys on this device (localStorage)</label>
+      <label class="check"><input type="checkbox" id="useProxy"> Route via same-origin proxy</label>
+      <p class="hint">Only needed if a provider blocks direct browser (CORS) requests.</p>
+      <button class="ghost small" id="clearKeys">Clear saved keys</button>
+    </section>
+
+    <section class="panel">
+      <h2>Query options</h2>
+      <div class="grid2">
+        <label>Results / provider
+          <input type="number" id="optLimit" min="1" max="10" value="5">
+        </label>
+        <label>Country (ISO-2)
+          <input type="text" id="optCountry" placeholder="e.g. us" maxlength="2">
+        </label>
+        <label>Language
+          <input type="text" id="optLang" placeholder="e.g. en" maxlength="5">
+        </label>
+        <label>Timeout (s)
+          <input type="number" id="optTimeout" min="3" max="60" value="15">
+        </label>
+      </div>
+      <label class="check"><input type="checkbox" id="optBias"> Bias results toward current map center</label>
+    </section>
+  </aside>
+
+  <main class="main">
+    <!-- ============ SEARCH TAB ============ -->
+    <section class="tab-panel" data-panel="search">
+      <form id="searchForm" class="searchbar">
+        <div class="seg" role="radiogroup" aria-label="Mode">
+          <label><input type="radio" name="mode" value="forward" checked><span>Forward</span></label>
+          <label><input type="radio" name="mode" value="reverse"><span>Reverse</span></label>
+        </div>
+        <input type="text" id="query" placeholder="Address, place or POI… e.g. 1600 Pennsylvania Ave NW, Washington DC" autocomplete="off">
+        <input type="text" id="refPoint" placeholder="Reference lat,lng (optional)" title="Known true location: used to measure each provider's error">
+        <button type="submit" class="primary" id="searchBtn">Geocode</button>
+      </form>
+      <div class="examples" id="examples"></div>
+
+      <div class="search-grid">
+        <div class="map-wrap">
+          <div id="map" aria-label="Results map"></div>
+          <div class="map-legend" id="mapLegend"></div>
+          <div class="map-tools">
+            <label class="check"><input type="checkbox" id="showAll" checked> All results</label>
+            <label class="check"><input type="checkbox" id="showLines" checked> Error lines</label>
+            <button class="ghost small" id="fitBtn">Fit</button>
+          </div>
+        </div>
+        <div class="results-col">
+          <div id="summaryStrip" class="summary-strip"></div>
+          <div id="resultCards" class="cards"></div>
+        </div>
+      </div>
+
+      <div class="panel wide" id="matrixPanel" hidden>
+        <h2>Agreement between providers <span class="hint inline">— distance between top results</span></h2>
+        <div id="matrix" class="table-scroll"></div>
+      </div>
+    </section>
+
+    <!-- ============ BATCH TAB ============ -->
+    <section class="tab-panel" data-panel="batch" hidden>
+      <div class="panel wide">
+        <h2>Benchmark a list of queries</h2>
+        <p class="hint">One query per line. Add a known location with <code>query | lat, lng</code> to measure absolute accuracy; otherwise each provider is measured against the median of the <em>other</em> providers (leave-one-out consensus). Nominatim is throttled to 1 request/second per its usage policy.</p>
+        <div class="batch-controls">
+          <label>Sample set
+            <select id="sampleSet"></select>
+          </label>
+          <button class="ghost" id="loadSample">Load sample</button>
+          <label>Mode
+            <select id="batchMode"><option value="forward">Forward</option><option value="reverse">Reverse (lines are lat, lng)</option></select>
+          </label>
+          <span class="spacer"></span>
+          <label class="file-btn ghost">Import results JSON<input type="file" id="importJson" accept="application/json" hidden></label>
+        </div>
+        <textarea id="batchInput" rows="12" spellcheck="false"></textarea>
+        <div class="batch-controls">
+          <div id="batchProviders" class="provider-toggles"></div>
+          <span class="spacer"></span>
+          <button class="primary" id="runBatch">Run benchmark</button>
+          <button class="ghost" id="stopBatch" disabled>Stop</button>
+        </div>
+        <div class="progress" hidden id="progressWrap"><div class="bar" id="progressBar"></div><span id="progressText"></span></div>
+        <div id="batchLog" class="batch-log"></div>
+      </div>
+    </section>
+
+    <!-- ============ REPORT TAB ============ -->
+    <section class="tab-panel" data-panel="report" hidden>
+      <div id="reportEmpty" class="empty">
+        <h2>No benchmark yet</h2>
+        <p>Run a benchmark in the <a href="#" data-goto="batch">Benchmark</a> tab, or import a previously exported results JSON. Single searches are also collected here — <button class="link" id="reportFromHistory">build report from search history</button>.</p>
+      </div>
+      <div id="report" hidden>
+        <div class="report-head">
+          <div>
+            <h1 id="reportTitle">Geocoding benchmark report</h1>
+            <p class="hint" id="reportMeta"></p>
+          </div>
+          <div class="report-actions">
+            <button class="ghost" id="exportCsv">Export CSV</button>
+            <button class="ghost" id="exportJson">Export JSON</button>
+            <button class="ghost" id="printReport">Print / PDF</button>
+          </div>
+        </div>
+        <div id="kpis" class="kpis"></div>
+        <div class="panel wide">
+          <h2>Findings</h2>
+          <ul id="findings" class="findings"></ul>
+        </div>
+        <div class="panel wide">
+          <h2>Scorecard</h2>
+          <div id="scorecard" class="table-scroll"></div>
+        </div>
+        <div class="chart-grid">
+          <div class="panel">
+            <h2>Latency <span class="hint inline">— median, with p95 tick</span></h2>
+            <div id="chartLatency"></div>
+          </div>
+          <div class="panel">
+            <h2>Coverage <span class="hint inline">— share of queries with ≥1 result</span></h2>
+            <div id="chartCoverage"></div>
+          </div>
+          <div class="panel">
+            <h2>Positional error distribution</h2>
+            <div id="chartError"></div>
+          </div>
+          <div class="panel">
+            <h2>Result precision <span class="hint inline">— normalized from each provider's type/accuracy</span></h2>
+            <div id="chartPrecision"></div>
+          </div>
+        </div>
+        <div class="panel wide">
+          <h2>Per-query detail <span class="hint inline">— error of top result in metres; click a row to open it on the map</span></h2>
+          <div id="perQuery" class="table-scroll"></div>
+        </div>
+        <p class="hint method" id="methodNote"></p>
+      </div>
+    </section>
+
+    <!-- ============ ABOUT TAB ============ -->
+    <section class="tab-panel" data-panel="about" hidden>
+      <div class="panel wide prose" id="aboutPanel"></div>
+    </section>
+  </main>
+</div>
+
+<div id="tip" class="tip" role="tooltip" hidden></div>
+<div id="toast" class="toast" hidden></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="providers.js"></script>
+<script src="samples.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
